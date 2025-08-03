@@ -1,0 +1,4 @@
+.python-version
+*.pdf
+__pycache__
+dist

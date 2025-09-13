@@ -1,10 +1,11 @@
-"""Infer 2D locations of nodes based on (relative) constraints."""
+"""Create a map from (relative) node constraints."""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Hashable, Mapping, Sequence
 from copy import deepcopy
+from itertools import combinations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
@@ -19,7 +20,7 @@ _HashableT = TypeVar("_HashableT", bound=Hashable)
 
 
 class RelativeMap:
-    r"""Create a possible map from angle and distance constraints.
+    r"""Create a map from node and edge constraints.
 
     Note:
         Depending on the constraints, there might be multiple solutions.
@@ -50,7 +51,7 @@ class RelativeMap:
         {'C': 0, 'B': 1, 'A': 2}
         >>> map.stableish_edges  # edges that are likely stable
         frozenset({('C', 'A'), ('B', 'A'), ('C', 'B')})
-        >>> map.plot(filename="map.pdf")  # plot map with matplotlib
+        >>> map.plot()  # plot map with matplotlib
         <Figure size 1500x1500 with 1 Axes>
     """
 
@@ -171,11 +172,11 @@ class RelativeMap:
 
     @property
     def stableish_edges(self) -> frozenset[tuple[Hashable, Hashable]]:
-        """Set of edges that are likely stable.
+        """Set of edges (node pairs) that are likely stable.
 
         If you are at one of the two nodes, you can likely trust the angle and
-        distance of the edge to get to the other node. If one of the nodes is
-        fixed, the other node can likely not move more than `stable_distance`
+        distance of the edge to get to the other node. Technically: If one of the
+        nodes is fixed, the other node can likely not move more than `stable_distance`
         (and the reverse).
 
         To reduce the risk of false positives (claiming the edge is stable but it is not),
@@ -194,7 +195,7 @@ class RelativeMap:
             for edge, constraints in self._edge_constraints.items()
             if "angle" in constraints
         ]
-        # objective: Ax=0
+        # objective: Ax=0 (later transformed into the quadratic objective)
         # constraints: Gx<=h
         a_objective, b_objective, g_constraints, h_constraints, keep_variables = (
             self._directed_distances(directed_edges)
@@ -206,24 +207,24 @@ class RelativeMap:
             for edge, constraints in self._edge_constraints.items()
             if "angle" not in constraints
         ]
-        dims = {}
-        if undirected_edges:
-            g_cone_constraints, h_cone_constraints = self._undirected_distances(
-                undirected_edges, a_objective.size[1]
-            )
-            dims = {
-                "l": g_constraints.size[0],
-                "q": [cone.size[0] for cone in g_cone_constraints],
-                "s": [],
-            }
-            g_constraints = sparse([g_constraints, *g_cone_constraints])
-            h_constraints = matrix([h_constraints, *h_cone_constraints])
+        g_cone_constraints, h_cone_constraints = self._undirected_distances(
+            undirected_edges, a_objective.size[1]
+        )
+        dims = {
+            "l": g_constraints.size[0],
+            "q": [cone.size[0] for cone in g_cone_constraints],
+            "s": [],
+        }
+        g_constraints = sparse([g_constraints, *g_cone_constraints])
+        h_constraints = matrix([h_constraints, *h_cone_constraints])
         a_objective = a_objective[:, keep_variables]
         g_constraints = g_constraints[:, keep_variables]
 
         # solve problem
-        solution, a_node = self._solve_with_fixed_nodes(
-            a_objective, b_objective, g_constraints, h_constraints, dims
+        solution, a_objective, g_constraints, h_constraints = (
+            self._solve_with_fixed_nodes(
+                a_objective, b_objective, g_constraints, h_constraints, dims
+            )
         )
 
         # find edges that are likely stable
@@ -231,8 +232,7 @@ class RelativeMap:
             2 * a_objective.T * a_objective,
             g_constraints,
             h_constraints,
-            a_node,
-            dims,
+            dims["q"],
             solution,
         )
 
@@ -329,6 +329,7 @@ class RelativeMap:
             < 1e-8
         ]
         if equal_rows_distances_columns:
+            # if any distance_min = distance_max
             rows, distances, columns = list(
                 zip(*equal_rows_distances_columns, strict=True)
             )
@@ -339,13 +340,13 @@ class RelativeMap:
                 size=(a_least_squares.size[1], 1),
             )
             b_least_square = -a_least_squares * distances
-            # create index which columns to keep in a/g, applied later
+            # which columns to keep in a/g, applied later (after we also have the cone constraints)
             keep_variables = [
                 variable
                 for variable in range(a_least_squares.size[1])
                 if variable not in columns
             ]
-            # remove rows in g/h now
+            # remove rows in g/h, applied now
             keep_constraints = list(
                 set(range(g_constraints.size[0]))
                 .difference(rows)
@@ -398,24 +399,32 @@ class RelativeMap:
     def plot(
         self,
         *,
-        filename: str | Path | None = None,
         exclude_edges: Sequence[tuple[Hashable, Hashable]] = (),
         distance_unit: str = "m",
-        **subplots_kwargs: Any,
+        subplots_kwargs: dict[str, Any] | None = None,
+        node_text_kwargs: dict[str, Any] | None = None,
+        edge_text_kwargs: dict[str, Any] | None = None,
     ) -> Figure:
         """Plot nodes and stable'ish edges.
 
         Args:
-            filename:
-                Where to save the PDF.
             exclude_edges:
                 Sequence of edges that should not be plotted.
             distance_unit:
                 Distance unit is printed for stable'ish edges.
             subplots_kwargs:
                 Keywords forwarded to `matplotlib.pyplot.subplots`.
+            node_text_kwargs:
+                Keywords forwarded to `matplotlib.pyplot.text` for node names.
+            edge_text_kwargs:
+                Keywords forwarded to `matplotlib.pyplot.text` for edge description.
         """
         import matplotlib.pyplot as plt
+
+        # default arguments
+        subplots_kwargs = subplots_kwargs or {}
+        node_text_kwargs = node_text_kwargs or {}
+        edge_text_kwargs = edge_text_kwargs or {}
 
         figure, axis = plt.subplots(**({"figsize": (15, 15)} | subplots_kwargs))
         axis.set_aspect("equal")
@@ -424,7 +433,14 @@ class RelativeMap:
         # plot nodes and their names
         axis.scatter(self._x[:, 0], self._x[:, 1], c="blue")
         for i, txt in enumerate(self._nodes):
-            axis.text(self._x[i, 0], self._x[i, 1], txt, ha="left", va="bottom")
+            axis.text(
+                self._x[i, 0],
+                self._x[i, 1],
+                txt,
+                ha="left",
+                va="bottom",
+                **node_text_kwargs,
+            )
 
         # determine which edges to plot
         # all edges between nodes that seem stable'ish
@@ -470,9 +486,10 @@ class RelativeMap:
                 va="bottom",
                 rotation=math.degrees(angle_left),
                 rotation_mode="anchor",
+                **edge_text_kwargs,
             )
 
-            # add distance only if the two nodes are in the same group
+            # add distance only if the edge is stable'ish
             if (from_node, to_node) not in self._stableish_edges and (
                 to_node,
                 from_node,
@@ -488,14 +505,10 @@ class RelativeMap:
                 va="top",
                 rotation=math.degrees(angle_left),
                 rotation_mode="anchor",
+                **edge_text_kwargs,
             )
 
         # TODO: refine text positions to avoid overlapping elements
-
-        # save the plot
-        if filename is not None:
-            plt.savefig(filename, bbox_inches="tight")
-
         return figure
 
     def _find_stableish_edges(
@@ -503,23 +516,50 @@ class RelativeMap:
         p_objective: spmatrix,
         g_constraints: spmatrix,
         h_constraints: matrix,
-        a_node: spmatrix,
-        dims: dict[str, int | list[int]],
+        second_order_cone_dims: Sequence[int],
         solution: matrix,
         close_enough: float = 3.0,
     ) -> frozenset[tuple[Hashable, Hashable]]:
         """Find edges that are likely stable: they move very little."""
-        stableish_edges = _sensitivity.find_stableish_edges(
+        # subset of nodes used for the analysis: nodes with node constraints are later
+        # merged with the stable edges
+        node_indices = [
+            self._node_to_index[node]
+            for node in self._nodes
+            if node not in self._node_constraints
+        ]
+
+        stableish_nodes, stableish_edges = _sensitivity.find_stableish_nodes_and_edges(
             p_objective,
             g_constraints,
             h_constraints,
-            a_node,
+            spmatrix([], [], [], size=(0, p_objective.size[1])),
             solution,
             # compare all nodes with all nodes
-            [[inode * 2, inode * 2 + 1] for inode in range(len(self._nodes))],
-            dims,
+            [
+                [node_index * 2, node_index * 2 + 1]
+                for node_index in range(len(node_indices))
+            ],
             self._stable_distance,
+            second_order_cone_dims,
         )
+        if self._node_constraints:
+            # need to remap the free nodes to the full list of nodes
+            mapping = dict(enumerate(node_indices))
+            stableish_nodes = {mapping[node] for node in stableish_nodes}
+            stableish_edges = tuple(
+                (mapping[node_from], mapping[node_to])
+                for node_from, node_to in stableish_edges
+            )
+
+            # if there are _node_constraints add them and combine them with stablish nodes
+            stableish_edges = stableish_edges + tuple(
+                combinations(
+                    stableish_nodes
+                    | {self._node_to_index[node] for node in self._node_constraints},
+                    r=2,
+                )
+            )
         return frozenset(
             (self._nodes[from_index], self._nodes[to_index])
             for from_index, to_index in stableish_edges
@@ -532,11 +572,10 @@ class RelativeMap:
         g_constraints: spmatrix,
         h_constraints: matrix,
         dims: dict[str, int | list[int]],
-    ) -> tuple[matrix, spmatrix]:
-        """Solves the problem while replacing knowing nodes with constants.
+    ) -> tuple[matrix, spmatrix, spmatrix, matrix]:
+        """Solves the problem while replacing located nodes with constants.
 
         Setting node constraints through Ax=b is not as stable as replacing all occurrences with constants.
-        However, we still need Ax=b to determine which edges are stable'ish.
         """
         # at least one located node (this is later removed to not impact the edge analysis)
         fake_location = not self._node_constraints
@@ -563,12 +602,14 @@ class RelativeMap:
             for index in range(a_objective.size[1])
             if index not in located_node_indices
         ]
-        b_objective = b_objective - a_objective[:, located_node_indices] * locations
-        a_objective = a_objective[:, keep]
-        h_constraints = (
+        b_objective_fixed = (
+            b_objective - a_objective[:, located_node_indices] * locations
+        )
+        a_objective_fixed = a_objective[:, keep]
+        h_constraints_fixed = (
             h_constraints - g_constraints[:, located_node_indices] * locations
         )
-        g_constraints = g_constraints[:, keep]
+        g_constraints_fixed = g_constraints[:, keep]
 
         # prepopulate the solution with known locations
         x = matrix(0.0, (len(self._nodes) * 2, 1))
@@ -578,10 +619,10 @@ class RelativeMap:
         # find a solution
         result = solvers.coneqp(
             # convert ||AX-b||^2 into the standard format for quadratic solvers
-            P=2 * a_objective.T * a_objective,
-            q=-2 * a_objective.T * b_objective,
-            G=g_constraints,
-            h=h_constraints,
+            P=2 * a_objective_fixed.T * a_objective_fixed,
+            q=-2 * a_objective_fixed.T * b_objective_fixed,
+            G=g_constraints_fixed,
+            h=h_constraints_fixed,
             dims=dims,
         )
         if result["status"] != "optimal":
@@ -595,25 +636,14 @@ class RelativeMap:
         x.size = (2, len(self._nodes))
         self._x = x.T
 
-        # create Ax=b constraints
         if fake_location:
             self._node_constraints = {}
-
-        a_node = spmatrix(
-            [1] * len(self._node_constraints) * 2,
-            list(range(len(self._node_constraints) * 2)),
-            [
-                variable
-                for node in self._node_constraints
-                for variable in (
-                    self._node_to_index[node] * 2,
-                    self._node_to_index[node] * 2 + 1,
-                )
-            ],
-            size=(len(self._node_constraints) * 2, full_solution.size[0]),
-            tc="d",
-        )
-        return full_solution, a_node
+        else:
+            a_objective = a_objective_fixed
+            g_constraints = g_constraints_fixed
+            h_constraints = h_constraints_fixed
+            full_solution = result["x"]
+        return full_solution, a_objective, g_constraints, h_constraints
 
 
 def _print_angle(radian: float, unit: str) -> str:

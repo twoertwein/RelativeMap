@@ -1,8 +1,6 @@
 # RelativeMap
 
-Infer 2D locations of nodes based on (relative) constraints by solving a second-order cone program (mostly quadratic).
-
-Depending on the constraints, multiple locations are feassable. To know which information is likely trustworthy, `RelativeMap.stableish_edges` contains edges (node pairs) that are likely stable. If you are at one node, you can likely trust the inferred angle and distance to reach the other node.
+Create a map from (relative) node constraints by solving a second-order cone program.
 
 Supported constraints:
 
@@ -14,6 +12,8 @@ Supported constraints:
   - Implemented as linear constraints, if the directions between the two nodes is known. Otherwise, implemented as cone constraints.
 - **Locations**: exact location of a node.
   - Implemented by sub-stituting variables (assumed to be perfect).
+
+Depending on the constraints, multiple locations are feassable. To know which information is likely trustworthy, `RelativeMap.stableish_edges` contains edges (node pairs) that are likely stable. If you are at one node, you can likely trust the inferred angle and distance to reach the other node.
 
 ## Installation
 
@@ -56,7 +56,6 @@ More complex example (locations of a [scuba diving quarray](https://sites.google
 ```py
 from relmap import RelativeMap
 
-# margin around the best distance guess
 min_factor = 0.9
 max_factor = 1.1
 

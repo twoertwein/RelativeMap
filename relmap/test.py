@@ -215,7 +215,7 @@ def test_crusty() -> None:
         },
         angle_unit="degree+clockwise",
         stable_distance=1.0,
-    ).plot()
+    ).plot().savefig("crustys.pdf", bbox_inches="tight")
 
 
 def test_null_space() -> None:
@@ -251,7 +251,7 @@ def test_stableish_edges() -> None:
     )
 
     # test each variable by itself: there should be no stable edge
-    stableish_edges = _sensitivity.find_stableish_edges(
+    stableish_nodes, stableish_edges = _sensitivity.find_stableish_nodes_and_edges(
         p_objective,
         g_constraints,
         h_constraints,
@@ -259,12 +259,12 @@ def test_stableish_edges() -> None:
         solution["x"],
         variable_groups=([0], [1], [2], [3]),
         max_distance=0.1,
-        dims={},
     )
+    assert stableish_nodes == {0}
     assert not stableish_edges
 
     # when fixing (x1, x2), (x2, x3) is fixed
-    stableish_edges = _sensitivity.find_stableish_edges(
+    stableish_nodes, stableish_edges = _sensitivity.find_stableish_nodes_and_edges(
         p_objective,
         g_constraints,
         h_constraints,
@@ -272,12 +272,12 @@ def test_stableish_edges() -> None:
         solution["x"],
         variable_groups=([0], [1, 2], [2, 3], [3]),
         max_distance=0.1,
-        dims={},
     )
+    assert stableish_nodes == {0}
     assert stableish_edges == ((1, 2),)
 
     # all individual variables are unique for a large distance
-    stableish_edges = _sensitivity.find_stableish_edges(
+    stableish_nodes, stableish_edges = _sensitivity.find_stableish_nodes_and_edges(
         p_objective,
         g_constraints,
         h_constraints,
@@ -285,8 +285,8 @@ def test_stableish_edges() -> None:
         solution["x"],
         variable_groups=([0], [1], [2], [3]),
         max_distance=1,
-        dims={},
     )
+    assert stableish_nodes == {0, 1, 2, 3}
     assert stableish_edges == ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
 
 

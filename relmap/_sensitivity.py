@@ -5,28 +5,29 @@ from itertools import accumulate, pairwise
 from cvxopt import lapack, matrix, spmatrix
 
 
-def find_stableish_edges(
+def find_stableish_nodes_and_edges(
     p_objective: spmatrix,
     g_constraints: spmatrix,
     h_constraints: matrix,
     a_equal_constraints: spmatrix,
     solution: matrix,
-    variable_groups: Sequence[Sequence[int]],
-    dims: Mapping[str, int | Sequence[int]],
+    variable_groups: Sequence[list[int]],
     max_distance: float,
+    second_order_cone_dims: Sequence[int] = (),
     tolerance: float = 1e-7,
-) -> tuple[tuple[int, int]]:
-    """Find pair of nodes (edges) whose relationship is likely to be stable in a quadratic problem.
+) -> tuple[set[int], tuple[tuple[int, int]]]:
+    """Find nodes and pair of nodes (edges) whose relationship is likely to be stable in a quadratic problem.
 
     Note:
-        A "node" is a group of variables.
-        A node pair is "stable", when one node can't move (much) given the other
-        nodes is fixed (and the reverse).
-        This function should not be used for concave problems as it analyzes the
-        null space around the current solution.
-        Even for positive-semi-definite P, this function might incorrectly indicate
-        that an edge is stable as it only tests the basis directions for movement of
-        each nodes and not all infinitely directions spanned by the null space.
+        - A "node" is a group of variables.
+        - A node pair is "stable", when one node can't move (much) given the other
+          nodes is fixed (and the reverse).
+        - A node is "stable" when it can't move (much).
+        - This function should not be used for concave problems as it analyzes the
+          null space around the current solution.
+        - Even for positive-semi-definite P, this function might incorrectly indicate
+          that a node or edge is stable as it only tests the basis directions for movement of
+          each nodes and not all infinitely directions spanned by the null space.
 
     Args:
         p_objective:
@@ -41,18 +42,17 @@ def find_stableish_edges(
             The solution found by the solver.
         variable_groups:
             Sequence of variable sequences. A variable sequence defines a "node".
-        dims:
-            Used to determine the cone constraints. Supports only cone constraints with c=0.
         max_distance:
             The maximum movement to be allowed for the edge to be stable'ish.
+        second_order_cone_dims:
+            Used to determine the cone constraints. Supports only cone constraints with c=0.
         tolerance:
             Used to determine if a value is close enough to zero.
 
     Returns:
-        A list of two-element tuples that represent stable edges. Tuple values are indices into `variable_groups`.
+        1) Set of indices into variable_groups that represent stable'ish nodes.
+        2) A list of two-element tuples that represent stable'ish edges. Tuple values are indices into `variable_groups`.
     """
-    assert not dims.get("s", []), "Not supported"
-
     # split linear and cone constraints
     (
         g_constraints,
@@ -60,12 +60,15 @@ def find_stableish_edges(
         g_cone_constraints,
         max_norm_cone_constraints,
         g_x_h_cone_constraints,
-    ) = _split_linear_and_cone_constraints(g_constraints, h_constraints, solution, dims)
+    ) = _split_linear_and_cone_constraints(
+        g_constraints, h_constraints, solution, second_order_cone_dims
+    )
 
     # assume everything can move, unless we find a direction with enough movement
+    # first list is for globally stable'ish nodes (without fixing any other nodes)
     stationary = [
         {j for j in range(len(variable_groups)) if i != j}
-        for i in range(len(variable_groups))
+        for i in range(-1, len(variable_groups))
     ]
 
     # active constraints and the objective function define the directions
@@ -84,15 +87,24 @@ def find_stableish_edges(
     constraints_inactive = g_constraints[inactive_indices, :]
     distance_to_inactive_constraint = slacks[inactive_indices]
 
-    for ifixed, fixed_variables in enumerate(variable_groups):
-        if not stationary[ifixed]:
+    # first test with no fixed nodes to find all nodes that are already fixed
+    for ifixed, fixed_variables in enumerate([[], *variable_groups], start=-1):
+        # list of variable groups to that we need check for the currently fixed variable group
+        # (we don't need to check globally stableish nodes)
+        free_variable_groups = stationary[ifixed + 1] - (
+            stationary[0] if ifixed != -1 else set()
+        )
+        if not free_variable_groups:
             continue
 
         # fix the current variables: this is the same as the null space of the original
         # matrix with two rows appended to fix the variables but that would be far less efficient
-        fixed_null_space = free_null_space * null_space(
-            free_null_space[fixed_variables, :]
-        )
+        fixed_null_space = free_null_space
+        if fixed_variables:
+            fixed_null_space = free_null_space * null_space(
+                free_null_space[fixed_variables, :]
+            )
+
         if fixed_null_space.size[1] == 0:
             # no movement possible
             continue
@@ -119,7 +131,7 @@ def find_stableish_edges(
         ]
 
         # check for each variable group, if it can move
-        for ivariables in stationary[ifixed].copy():
+        for ivariables in free_variable_groups:
             variables = variable_groups[ivariables]
             direction_norms = (
                 matrix(1.0, size=(1, len(variables)))
@@ -131,48 +143,52 @@ def find_stableish_edges(
                 # Skip the basis vector if there is no movement for the current variables
                 if direction_norm < tolerance:
                     continue
+                # determine alpha that would enable enough movement for the variable group
+                # not to be considered stable'ish anymore
+                moveable_alpha = max_distance / direction_norm
 
-                speed_towards_constraints = speeds_towards_constraints[:, idirection]
                 # maximum distance to reach the first inactive constraint
-                max_alpha = min(
-                    (
-                        distance_to_inactive_constraint[index] / speed
-                        for index, speed in enumerate(speed_towards_constraints)
-                        # can ignore constraints from which we are moving away or are moving
-                        # parallel to: can move infinetally
-                        if speed > tolerance
-                    ),
-                    default=float("inf"),
+                is_moveable = all(
+                    distance / speed >= moveable_alpha
+                    for distance, speed in zip(
+                        distance_to_inactive_constraint,
+                        speeds_towards_constraints[:, idirection],
+                        strict=True,
+                    )
+                    # can ignore constraints from which we are moving away or are moving
+                    # parallel to: can move infinetally
+                    if speed > tolerance
                 )
 
-                # check cone constraints - only when distance is larger
-                if max_alpha * direction_norm >= max_distance:
-                    max_alpha = min(
-                        [
-                            find_max_step_cone_constraint(
-                                g_x_h_cone_constraint,
-                                speed_towards_cone_constraints[:, idirection],
-                                max_norm_cone_constraint,
-                                tolerance,
-                            )
-                            for g_x_h_cone_constraint, max_norm_cone_constraint, speed_towards_cone_constraints in zip(
-                                g_x_h_cone_constraints,
-                                max_norm_cone_constraints,
-                                speeds_towards_cone_constraints,
-                                strict=True,
-                            )
-                        ],
-                        default=max_alpha,
+                # check cone constraints - only when there might be enough movement
+                if not is_moveable:
+                    continue
+
+                is_moveable = all(
+                    find_max_step_cone_constraint(
+                        g_x_h_cone_constraint,
+                        speed_towards_cone_constraints[:, idirection],
+                        max_norm_cone_constraint,
+                        tolerance,
                     )
+                    >= moveable_alpha
+                    for g_x_h_cone_constraint, max_norm_cone_constraint, speed_towards_cone_constraints in zip(
+                        g_x_h_cone_constraints,
+                        max_norm_cone_constraints,
+                        speeds_towards_cone_constraints,
+                        strict=True,
+                    )
+                )
 
-                    if max_alpha * direction_norm >= max_distance:
-                        stationary[ifixed].remove(ivariables)
-                        stationary[ivariables].remove(ifixed)
-                        break
+                if is_moveable:
+                    stationary[ifixed + 1].remove(ivariables)
+                    if ifixed in stationary[ivariables + 1]:
+                        stationary[ivariables + 1].remove(ifixed)
+                    break
 
-    return tuple(
+    return stationary[0], tuple(
         (from_group, to_group)
-        for from_group, to_groups in enumerate(stationary)
+        for from_group, to_groups in enumerate(stationary[1:])
         for to_group in to_groups
         if from_group < to_group
     )
@@ -249,12 +265,11 @@ def _split_linear_and_cone_constraints(
     g_constraints: spmatrix,
     h_constraints: matrix,
     solution: matrix,
-    dims: Mapping[str, int | Sequence[int]],
+    second_order_cone_dims: Sequence[int],
 ) -> tuple[spmatrix, matrix, list[spmatrix], list[float], list[matrix]]:
     # split linear and cone constraints
-    n_linear_constraints = dims.get("l", g_constraints.size[0])
-    cone_dimensions = dims.get("q", [])
-    constraint_ends = list(accumulate([n_linear_constraints, *cone_dimensions]))
+    linear_dims = g_constraints.size[0] - sum(second_order_cone_dims)
+    constraint_ends = list(accumulate([linear_dims, *second_order_cone_dims]))
     g_cone_constraints = [
         g_constraints[start:end, :] for start, end in pairwise(constraint_ends)
     ]
@@ -284,8 +299,8 @@ def _split_linear_and_cone_constraints(
     ]
 
     # linear constraints
-    g_constraints = g_constraints[:n_linear_constraints, :]
-    h_constraints = h_constraints[:n_linear_constraints]
+    g_constraints = g_constraints[:linear_dims, :]
+    h_constraints = h_constraints[:linear_dims]
 
     return (
         g_constraints,

@@ -1,6 +1,6 @@
 [project]
 name = "relmap"
-version = "0.1.1"
+version = "0.1.2"
 description = "Create a map from (relative) node constraints"
 readme = "README.md"
 requires-python = ">=3.12"

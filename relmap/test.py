@@ -27,6 +27,7 @@ def assert_directions(
 
 
 def get_locations(solver: RelativeMap, nodes: Iterable[Hashable]) -> np.ndarray:
+    assert solver.y >= -1e-8
     return np.array([list(solver.x[solver.node_to_index[node], :]) for node in nodes])
 
 

@@ -166,6 +166,15 @@ class RelativeMap:
         return matrix(self._x)
 
     @property
+    def y(self) -> float:
+        """The objective value of the optimization problem.
+
+        Lower is better, ideally 0.0. It roughly can be interpreted as the squared sum of
+        Euclidean distances so that all nodes fulfil the angle constraints.
+        """
+        return self._y
+
+    @property
     def node_to_index(self) -> Mapping[Hashable, int]:
         """Map node names to indices in `x`."""
         return self._node_to_index
@@ -629,6 +638,11 @@ class RelativeMap:
             error = ValueError("Failed to find an optimal solution")
             error.add_note(f"{result}")
             raise error
+
+        # the optimization value: add the constant term so that the minimum is at 0
+        self._y = result["primal objective"] + next(
+            iter(b_objective_fixed.T * b_objective_fixed)
+        )
 
         # re-map optimization results to node locations (exclude distances)
         x[keep] = result["x"][: len(keep)]

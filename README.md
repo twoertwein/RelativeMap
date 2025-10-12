@@ -20,10 +20,10 @@ Depending on the constraints, multiple locations are feassable. To know which in
 ```sh
 # without plotting the map
 python -m pip install git+https://github.com/twoertwein/RelativeMap.git
-# with plotting the map (installs matplotlib)
+# with plotting the map
 python -m pip install 'git+https://github.com/twoertwein/RelativeMap.git#relmap[plot]'
 ```
-## Example
+## Examples
 
 Simple example
 ```py
@@ -31,10 +31,10 @@ from relmap import RelativeMap
 
 r"""
                C (?, ?)
-              / \ 
+              / \
 angle: 30    /   \ angle: 330
 distance: ? /     \ distance: ?
-           /       \ 
+           /       \
    (?, ?) A---------B (?, ?)
          angle: 90 (west)
          distance: 2
@@ -52,10 +52,11 @@ RelativeMap(
 
 ![simple example map](./media/example.png)
 
-More complex example (locations of a [scuba diving quarray](https://sites.google.com/view/crustys-quarry/home))
+More complex example (attractions inside a [scuba diving quarray](https://sites.google.com/view/crustys-quarry/home))
 ```py
 from relmap import RelativeMap
 
+# allow +/-10% around the distance constraints
 min_factor = 0.9
 max_factor = 1.1
 
@@ -71,6 +72,7 @@ RelativeMap(
             "min_distance": 39 * min_factor,
             "max_distance": 39 * max_factor,
         },
+        ("South Dock", "Plane"): {"angle": 340},
         ("Bus", "Boxing Ring"): {"angle": 165},
         ("SAT Dish", "Boxing Ring"): {
             "angle": 220,

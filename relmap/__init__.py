@@ -29,10 +29,10 @@ class RelativeMap:
         >>> from relmap import RelativeMap
         >>> r'''
                        C (?, ?)
-                      / \ 
+                      / \
         angle: 30    /   \ angle: 330
         distance: ? /     \ distance: ?
-                   /       \ 
+                   /       \
            (?, ?) A---------B (?, ?)
                  angle: 90 (west)
                  distance: 2
@@ -51,7 +51,7 @@ class RelativeMap:
         {'C': 0, 'B': 1, 'A': 2}
         >>> map.stableish_edges  # edges that are likely stable
         frozenset({('C', 'A'), ('B', 'A'), ('C', 'B')})
-        >>> map.plot()  # plot map with matplotlib
+        >>> map.plot()
         <Figure size 1500x1500 with 1 Axes>
     """
 
@@ -413,6 +413,7 @@ class RelativeMap:
         subplots_kwargs: dict[str, Any] | None = None,
         node_text_kwargs: dict[str, Any] | None = None,
         edge_text_kwargs: dict[str, Any] | None = None,
+        overlapping_iterations: int = 150,
     ) -> Figure:
         """Plot nodes and stable'ish edges.
 
@@ -427,6 +428,8 @@ class RelativeMap:
                 Keywords forwarded to `matplotlib.pyplot.text` for node names.
             edge_text_kwargs:
                 Keywords forwarded to `matplotlib.pyplot.text` for edge description.
+            overlapping_iterations:
+                Run an overlapping heuristic for multiple iterations.
         """
         import matplotlib.pyplot as plt
 
@@ -440,16 +443,19 @@ class RelativeMap:
         axis.set_axis_off()
 
         # plot nodes and their names
-        axis.scatter(self._x[:, 0], self._x[:, 1], c="blue")
-        for i, txt in enumerate(self._nodes):
+        # and keep track of fixed and moveable artists (later moving artists to minimize overlaps)
+        fixed_artists = [axis.scatter(self._x[:, 0], self._x[:, 1], c="blue")]
+        moveable_artists = [
             axis.text(
                 self._x[i, 0],
                 self._x[i, 1],
                 txt,
-                ha="left",
-                va="bottom",
+                ha="center",
+                va="center",
                 **node_text_kwargs,
             )
+            for i, txt in enumerate(self._nodes)
+        ]
 
         # determine which edges to plot
         # all edges between nodes that seem stable'ish
@@ -473,31 +479,48 @@ class RelativeMap:
             to_index = self._node_to_index[to_node]
 
             # plot line
-            axis.plot(
-                self._x[[from_index, to_index], 0],
-                self._x[[from_index, to_index], 1],
-                "blue",
+            fixed_artists.extend(
+                axis.plot(
+                    self._x[[from_index, to_index], 0],
+                    self._x[[from_index, to_index], 1],
+                    "blue",
+                )
             )
 
             # and add angles
             nodes = self._x[[from_index, to_index], :]
+            if nodes[0] > nodes[1]:
+                nodes = nodes[[1, 0], :]
             direction = nodes[1, :] - nodes[0, :]
-            if direction[0] < 0:
-                direction = -direction
             angle_left = math.atan2(direction[1], direction[0])
             angle_right = angle_left + math.pi
 
-            axis.text(
-                (nodes[1, 0] + nodes[0, 0]) / 2,
-                (nodes[1, 1] + nodes[0, 1]) / 2,
-                f"{_print_angle(angle_left, self._angle_unit)}→   ←{_print_angle(angle_right, self._angle_unit)}",
-                ha="center",
-                va="bottom",
-                rotation=math.degrees(angle_left),
-                rotation_mode="anchor",
-                **edge_text_kwargs,
+            center = matrix(0.5, size=(1, 2)) * nodes
+            moveable_artists.append(
+                axis.text(
+                    (2 * center[0, 0] + nodes[1, 0]) / 3,
+                    (2 * center[0, 1] + nodes[1, 1]) / 3,
+                    f"←{_print_angle(angle_right, self._angle_unit)}",
+                    ha="center",
+                    va="bottom",
+                    rotation=math.degrees(angle_left),
+                    rotation_mode="anchor",
+                    **edge_text_kwargs,
+                )
             )
 
+            moveable_artists.append(
+                axis.text(
+                    (2 * center[0, 0] + nodes[0, 0]) / 3,
+                    (2 * center[0, 1] + nodes[0, 1]) / 3,
+                    f"{_print_angle(angle_left, self._angle_unit)}→",
+                    ha="center",
+                    va="bottom",
+                    rotation=math.degrees(angle_left),
+                    rotation_mode="anchor",
+                    **edge_text_kwargs,
+                )
+            )
             # add distance only if the edge is stable'ish
             if (from_node, to_node) not in self._stableish_edges and (
                 to_node,
@@ -506,18 +529,30 @@ class RelativeMap:
                 continue
 
             distance = blas.nrm2(direction)
-            axis.text(
-                (nodes[1, 0] + nodes[0, 0]) / 2,
-                (nodes[1, 1] + nodes[0, 1]) / 2,
-                f"{round(distance)}{distance_unit}",
-                ha="center",
-                va="top",
-                rotation=math.degrees(angle_left),
-                rotation_mode="anchor",
-                **edge_text_kwargs,
+            moveable_artists.append(
+                axis.text(
+                    (nodes[1, 0] + nodes[0, 0]) / 2,
+                    (nodes[1, 1] + nodes[0, 1]) / 2,
+                    f"{round(distance)}{distance_unit}",
+                    ha="center",
+                    va="top",
+                    rotation=math.degrees(angle_left),
+                    rotation_mode="anchor",
+                    **edge_text_kwargs,
+                )
             )
 
-        # TODO: refine text positions to avoid overlapping elements
+        # try to reduce overlapping text fields
+        if overlapping_iterations > 0:
+            from relmap import _overlapping_text
+
+            _overlapping_text.minimize_overlaps(
+                figure,
+                axis,
+                moveable_artists,
+                fixed_artists,
+                iterations=overlapping_iterations,
+            )
         return figure
 
     def _find_stableish_edges(

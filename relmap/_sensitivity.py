@@ -14,7 +14,7 @@ def find_stableish_nodes_and_edges(
     variable_groups: Sequence[list[int]],
     max_distance: float,
     second_order_cone_dims: Sequence[int] = (),
-    tolerance: float = 1e-7,
+    tolerance: float = 1e-6,
 ) -> tuple[set[int], tuple[tuple[int, int]]]:
     """Find nodes and pair of nodes (edges) whose relationship is likely to be stable in a quadratic problem.
 

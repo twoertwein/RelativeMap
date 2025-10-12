@@ -4,8 +4,10 @@ import numpy as np
 import pytest
 from cvxopt import matrix, solvers, spmatrix
 from scipy.linalg import null_space as null_space_scipy
+from shapely import Polygon
+from shapely.affinity import translate
 
-from relmap import RelativeMap, _sensitivity
+from relmap import RelativeMap, _overlapping_text, _sensitivity
 
 
 def assert_directions(
@@ -178,6 +180,7 @@ def test_crusty() -> None:
                 "min_distance": 39 * min_factor,
                 "max_distance": 39 * max_factor,
             },
+            ("South Dock", "Plane"): {"angle": 340},
             ("Bus", "Boxing Ring"): {"angle": 165},
             ("SAT Dish", "Boxing Ring"): {
                 "angle": 220,
@@ -304,3 +307,21 @@ def test_cone_stableish_edges_unstable() -> None:
     # 1 could be anywhere: no stable edges
     solver = RelativeMap({(0, 1): {"max_distance": 1}}, node_constraints={0: (0, 0)})
     assert not solver.stableish_edges
+
+
+def test_minimal_translation_vectors() -> None:
+    # generate boxes with no overlap, overlap, rotation, and fully enclosed
+    boxes = [
+        np.array([[-1, -1], [-1, 1], [1, 1], [1, -1]]),
+        np.array([[1, 0], [0, -1], [-1, 0], [0, 1]]),
+    ]
+    boxes += [box * 2 for box in boxes] + [box + 1 for box in boxes]
+    boxes = list(map(Polygon, boxes))
+    for box_a in boxes:
+        for box_b in boxes:
+            vectors = _overlapping_text.minimal_translation_vector(box_a, box_b, False)
+            for vector in vectors:
+                if np.linalg.norm(vector) < 1e-6:
+                    continue
+                assert translate(box_a, *vector).intersection(box_b).area < 1e-6
+                assert translate(box_a, *vector * 0.99).intersection(box_b).area > 1e-6

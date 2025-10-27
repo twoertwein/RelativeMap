@@ -438,7 +438,7 @@ class RelativeMap:
         node_text_kwargs = node_text_kwargs or {}
         edge_text_kwargs = edge_text_kwargs or {}
 
-        figure, axis = plt.subplots(**({"figsize": (15, 15)} | subplots_kwargs))
+        figure, axis = plt.subplots(**({"figsize": (15, 15)} | subplots_kwargs))  # ty: ignore
         axis.set_aspect("equal")
         axis.set_axis_off()
 

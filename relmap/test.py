@@ -38,7 +38,7 @@ def get_locations(solver: RelativeMap, nodes: Iterable[Hashable]) -> np.ndarray:
 def test_two_nodes(angle: float, add_distance: bool) -> None:
     locations = get_locations(
         RelativeMap(
-            {
+            {  # ty: ignore
                 (0, 1): {"angle": angle}
                 | ({"min_distance": 1.0, "max_distance": 2.0} if add_distance else {})
             }
@@ -169,7 +169,7 @@ def test_crusty() -> None:
     min_factor = 0.9
     max_factor = 1.1
     RelativeMap(
-        {
+        {  # ty: ignore
             ("South Dock", "Boxing Ring"): {
                 "angle": 90,
                 "min_distance": 26 * min_factor,
@@ -297,7 +297,7 @@ def test_stableish_edges() -> None:
 def test_cone_stableish_edges_stable() -> None:
     # 1 should be at (0, 1): all nodes are uniquely determined
     solver = RelativeMap(
-        {(0, 1): {"max_distance": 1}, (1, 2): {"max_distance": 1}},
+        {(0, 1): {"max_distance": 1}, (1, 2): {"max_distance": 1}},  # ty: ignore
         node_constraints={0: (0, 0), 2: (0, 2)},
     )
     assert len(solver.stableish_edges) == 3
@@ -305,7 +305,7 @@ def test_cone_stableish_edges_stable() -> None:
 
 def test_cone_stableish_edges_unstable() -> None:
     # 1 could be anywhere: no stable edges
-    solver = RelativeMap({(0, 1): {"max_distance": 1}}, node_constraints={0: (0, 0)})
+    solver = RelativeMap({(0, 1): {"max_distance": 1}}, node_constraints={0: (0, 0)})  # ty: ignore
     assert not solver.stableish_edges
 
 

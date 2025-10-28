@@ -118,3 +118,9 @@ RelativeMap(
 ```
 
 ![more complex example map](./media/crustys.png)
+
+## Tech behind the scene
+
+1. Solving a second-order cone program with [cvxopt](https://pypi.org/project/cvxopt/) to determine the node locations.
+2. Analyzing the null-space of the quadratic part of the above optimization problem to find edges that are likely stable. When one end of an edge is fixed, does the other end have any freedom to move around? Unless we find a direction (from the null-space) on which the other end of the edge can move enough, we assume it is stable. As we can't enumerate all direction in the null-space, it is possible that we incorrectly assume that an edge is stable. The analysis uses cone-constraints (maximum distances without direction constraints) by testing if they would limit the movement along each direction. However, they are not used to restrict the set of directions themselves (the cone constraints are not used to determine the null-space).
+3. Avoiding overlapping text fields by conducting an iterative greedy heuristic that moves overlapping rotated bounding boxes by their minimal translation vectors.
